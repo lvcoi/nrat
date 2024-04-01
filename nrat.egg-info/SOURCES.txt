@@ -1,0 +1,7 @@
+setup.py
+nrat.egg-info/PKG-INFO
+nrat.egg-info/SOURCES.txt
+nrat.egg-info/dependency_links.txt
+nrat.egg-info/entry_points.txt
+nrat.egg-info/requires.txt
+nrat.egg-info/top_level.txt
