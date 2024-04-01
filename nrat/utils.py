@@ -1,5 +1,9 @@
 import argparse
+import json
+import sys
 import logging
+
+logger = logging.getLogger(__name__)
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from scapy.config import conf
 
@@ -41,10 +45,21 @@ def setup_argparse():
     return parser.parse_args()
 
 def execute_tasks(tasks, max_workers):
-    # Execute given tasks in parallel using ThreadPoolExecutor
+    # Execute a list of tasks in parallel using a thread pool
+            # Create a thread pool with the specified number of workers
     results = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(task_func, arg) for task_func, arg in tasks]
+        futures = []
+        for task in tasks:
+            if callable(task):  # If the task is a callable function or method
+                future = executor.submit(task)
+            elif isinstance(task, tuple):  # If the task is a tuple of (function, args)
+                task_func, arg = task
+                future = executor.submit(task_func, arg)
+            else:
+                raise TypeError(f"Invalid task type: {type(task)}")
+            futures.append(future)
+
         for future in as_completed(futures):
             try:
                 result = future.result()
@@ -55,13 +70,37 @@ def execute_tasks(tasks, max_workers):
     return results
 
 def configure_logging(args):
-    # Configure logging based on command line arguments
-    if args.debug:
-        log_level = logging.DEBUG
-    elif args.verbose:
-        log_level = logging.INFO
-    else:
-        log_level = logging.WARNING
+    log_level = logging.DEBUG if args.debug else logging.INFO if args.verbose else logging.WARNING
 
-    logging.basicConfig(level=log_level)
-    conf.verb = 2 if args.verbose else 0
+    class StructuredMessage:
+        def __init__(self, message, **kwargs):
+            self.message = message
+            self.kwargs = kwargs
+
+        def __str__(self):
+            return f"{self.message} | {json.dumps(self.kwargs)}"
+
+    class JsonFormatter(logging.Formatter):
+        def format(self, record):
+            log_record = record.__dict__.copy()
+            if record.args:
+                log_record['message'] = record.getMessage()
+            else:
+                log_record['message'] = record.getMessage()
+            log_record['level'] = record.levelname
+            log_record['logger'] = record.name
+            return json.dumps(log_record, default=str)
+
+    logging.basicConfig(
+        level=log_level,
+        format='%(message)s',
+        stream=sys.stdout,
+        handlers=[logging.StreamHandler(), logging.FileHandler("app.log")],
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(JsonFormatter())
+
+    # Example usage of structured logging
+    logger.info(StructuredMessage("Log initialized", level=log_level))
