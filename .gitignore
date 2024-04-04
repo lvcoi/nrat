@@ -4,3 +4,5 @@ nrat.egg-info/
 nrat.code-workspace
 app.log
 Untitled.ipynb
+.gitignore
+__pycache__/

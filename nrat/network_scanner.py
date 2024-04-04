@@ -1,24 +1,27 @@
 import ipaddress
 import logging
-import json
-from scapy.layers.l2 import ARP, Ether, srp
-from scapy.layers.dns import sr1
-from scapy.layers.inet import IP, ICMP
+from .utils import setup_argparse as args
+from scapy.layers.l2 import ARP, Ether
+from scapy.sendrecv import srp, sr, sr1
+from scapy.layers.inet import IP, ICMP, TCP
 from concurrent.futures import ThreadPoolExecutor
 
 # Setup structured logging
-logger = logging.getLogger(__name__)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-handler = logging.StreamHandler()
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-logger.setLevel(logging.INFO)
+def setup_logger():
+    logger = logging.getLogger(__name__)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    return logger
+
+logger = setup_logger()
 
 class NetworkScanner:
-    def __init__(self, target: str, timeout=1, quick_scan_mode=False):
+    def __init__(self, target: str, timeout=1):
         self.target = target
         self.timeout = timeout
-        self.quick_scan_mode = quick_scan_mode
         self.validate_target()
 
     def validate_target(self):
@@ -28,19 +31,43 @@ class NetworkScanner:
         except ValueError as e:
             logger.error("Invalid network target: %s - %s", self.target, e)
             raise
-    
+
+    def arp_sweep(self):
+        """
+        Scans the specified network range using ARP requests to identify active hosts.
+        """
+        # Start logging 
+        logger.info("ARP sweep started on %s", self.target)
+        # Create ARP packet
+        arp = ARP(pdst=self.target)
+        ether = Ether(dst="ff:ff:ff:ff:ff:ff")
+        packet = ether / arp
+        # Send packet and receive response 
+        answerd, unanswered = srp(packet, 
+                                  timeout=self.timeout, 
+                                  verbose=args.verbose
+                                  )[0]
+        hosts = [{'ip': received.psrc, 'mac': received.hwsrc} for sent, received in results]
+        return hosts
+
+    def ack_scan(self):
+        """
+        Perform an ACK scan on the target network.
+        """
+        logger.info("ACK scan started on %s", self.target)
+        packet = IP(dst=self.target) / TCP(dport=args.ports, flags="A")
+        ans, unans = sr(packet, timeout=self.timeout, verbose=0)
+        # Further processing of `ans` and `unans` can be done here
+
     def icmp_sweep(self):
         """
         Perform an ICMP sweep on the target network.
         """
-        method = "ICMP Sweep"
-        logger.info(f"{method} started on {self.target}")
+        logger.info("ICMP sweep started on %s", self.target)
         network = ipaddress.ip_network(self.target, strict=False)
-
         with ThreadPoolExecutor() as executor:
             tasks = [executor.submit(self.ping_host, str(host)) for host in network.hosts()]
             results = [task.result() for task in tasks]
-
         return results
 
     def ping_host(self, host):
@@ -49,47 +76,16 @@ class NetworkScanner:
 
         :param host: IP address of the host to ping.
         """
-        method = "Ping Host"
-        packet = IP(dst=host)/ICMP()
+        packet = IP(dst=host) / ICMP()
         try:
             response = sr1(packet, timeout=self.timeout, verbose=False)
             if response:
-                logger.debug(f"{method} - Host {host} is up (IP: {response.src}, TTL: {response.ttl})")
+                logger.debug("Host %s is up (IP: %s, TTL: %s)", host, response.src, response.ttl)
                 return {"host": host, "status": "up", "ip": response.src, "ttl": response.ttl}
             else:
-                logger.debug(f"{method} - Host {host} did not respond")
+                logger.debug("Host %s did not respond", host)
                 return {"host": host, "status": "down"}
-        except ipaddress.AddressValueError as e:
-            logger.error(f"{method} - Error pinging {host}: {e}")
+        except Exception as e:
+            logger.error("Error pinging %s: %s", host, e)
 
-    def arp_sweep(self):
-       """
-       Scans the specified network range and returns a list of responding hosts.
-       Args:
-           cidr (str): The network range to scan, in CIDR notation.
-       Returns:
-           list: A list of dictionaries, where each dictionary represents a responding
-                 host and contains the keys 'ip' (IP address) and 'mac' (MAC address).
-       """
-       arp = ARP(pdst=self.target)
-       ether = Ether(dst="ff:ff:ff:ff:ff:ff")
-       packet = ether/arp
-       result = srp(packet, timeout=3, verbose=0)[0]
-       clients = []
-       for sent, received in result:
-           clients.append({'ip': received.psrc, 'mac': received.hwsrc})
-       return clients                  
-    
-    def arp_request(self, arp_request):
-        """
-        Send an ARP request.
 
-        :param arp_request: The ARP request packet to send.
-        """
-        method = "ARP Request"
-        broadcast = Ether(dst="ff:ff:ff:ff:ff:ff")
-        answered, _ = srp(broadcast / arp_request, timeout=self.timeout, verbose=False)
-        results = [{"host": received.psrc, "mac": received.hwsrc} for _, received in answered]
-        for result in results:
-            logger.debug(f"{method} - Host {result['host']} is up (MAC: {result['mac']})")
-        return results

@@ -39,12 +39,12 @@ def setup_argparse():
                             help='Perform ARP scan on target network')
     output_group = parser.add_argument_group('Output Options')
     output_group.add_argument('-o', '--output', default=None, help='Save output to a file')
+    parser.add_argument('-p', '--ports', type=list, default=[80,443,22,21,25], help='Ports to scan')
     parser.add_argument('-t', '--threads', type=int, default=40, help='Number of threads for parallel execution')
     parser.add_argument('-v', '--verbose', action='store_true', default=False, help='Enable verbose logging')
     parser.add_argument('-d', '--debug', action='store_true', default=False, help='Enable debug logging')
 
     return parser.parse_args()
-
 
 def execute_tasks(tasks, max_workers):
     """
