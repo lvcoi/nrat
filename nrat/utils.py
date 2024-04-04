@@ -29,6 +29,7 @@ def setup_argparse():
     """
 
     parser.add_argument('target', help='Target IP address, hostname, or CIDR range')
+    parser.add_argument('--timeout', type=int, default=1, help='Timeout for network requests in seconds')
     command_group = parser.add_mutually_exclusive_group()
     command_group.add_argument('--quick', action='store_true', default=False,
                                help='Perform a ping sweep and ARP request, printing live hosts')
@@ -44,63 +45,44 @@ def setup_argparse():
 
     return parser.parse_args()
 
+
 def execute_tasks(tasks, max_workers):
-    # Execute a list of tasks in parallel using a thread pool
-            # Create a thread pool with the specified number of workers
+    """
+    Execute a list of tasks in parallel using a thread pool.
+    """
     results = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = []
-        for task in tasks:
-            if callable(task):  # If the task is a callable function or method
-                future = executor.submit(task)
-            elif isinstance(task, tuple):  # If the task is a tuple of (function, args)
-                task_func, arg = task
-                future = executor.submit(task_func, arg)
-            else:
-                raise TypeError(f"Invalid task type: {type(task)}")
-            futures.append(future)
-
+        futures = {executor.submit(task[0], *task[1:]): task for task in tasks if isinstance(task, tuple)}
+        
         for future in as_completed(futures):
+            task = futures[future]
             try:
                 result = future.result()
-                if result:
-                    results.extend(result)
+                results.append(result)
+                logger.debug(f"Task completed: {task[0].__name__}")
             except Exception as e:
-                logging.warning(f'Task execution error: {e}')
+                logger.error(f'Task execution error in {task[0].__name__}: {e}', exc_info=True)
+
     return results
 
 def configure_logging(args):
+    """
+    Configure structured logging for the application.
+    """
     log_level = logging.DEBUG if args.debug else logging.INFO if args.verbose else logging.WARNING
 
-    class StructuredMessage:
-        def __init__(self, message, **kwargs):
-            self.message = message
-            self.kwargs = kwargs
+    logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(log_level)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logging.getLogger().addHandler(handler)
 
-        def __str__(self):
-            return f"{self.message} | {json.dumps(self.kwargs)}"
+    if args.debug:
+        conf.verb = 2
+    else:
+        conf.verb = 0
 
-    class JsonFormatter(logging.Formatter):
-        def format(self, record):
-            log_record = record.__dict__.copy()
-            if record.args:
-                log_record['message'] = record.getMessage()
-            else:
-                log_record['message'] = record.getMessage()
-            log_record['level'] = record.levelname
-            log_record['logger'] = record.name
-            return json.dumps(log_record, default=str)
-
-    logging.basicConfig(
-        level=log_level,
-        format='%(message)s',
-        stream=sys.stdout,
-        handlers=[logging.StreamHandler(), logging.FileHandler("app.log")],
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-
-    for handler in logging.getLogger().handlers:
-        handler.setFormatter(JsonFormatter())
-
-    # Example usage of structured logging
-    logger.info(StructuredMessage("Log initialized", level=log_level))
+if __name__ == '__main__':
+    args = setup_argparse()
+    configure_logging(args)
